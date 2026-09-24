@@ -12,7 +12,7 @@ import Foundation
 /// (forward: docx → markdown + `.meta.yaml` sidecar) writes it, and
 /// `md-to-word-swift`'s `Tier3MetadataRestorer` (reverse: markdown +
 /// sidecar → docx) recomputes it to verify a sidecar entry still applies.
-/// Before this package existed, each side carried its own hand-duplicated
+/// Before this shared implementation existed, each side carried its own hand-duplicated
 /// copy of the same algorithm — which drifted out of sync in practice (see
 /// PsychQuant/macdoc#220's implementation history: a Codex cross-model
 /// review round caught a real divergence between the two copies). Both
@@ -118,9 +118,14 @@ import Foundation
 /// type's contract (even though it may not change the Swift API signature)
 /// and MUST ship as a new major version of `CommonConverterSwift`, with the
 /// literal test vectors in `ParagraphFingerprintTests.swift` updated in the
-/// same release. Consumers pin an exact-enough lower bound specifically so
-/// a silent algorithm change can never reach them without an explicit
-/// version bump on their side.
+/// same release. Consumers require at least `0.5.0` (the version this type
+/// first shipped in). Fingerprint behavior MUST remain unchanged throughout
+/// that compatible `0.x` range — the protection against a silent algorithm
+/// change is the *major-version-bump policy above*, not the lower bound by
+/// itself (a lower bound alone would still admit later `0.x` releases
+/// automatically; it is the promise that only a major bump may change
+/// behavior that consumers actually rely on). Different package versions
+/// that both honor this contract remain interoperable with each other.
 public enum ParagraphFingerprint: Sendable {
     /// Unicode "smart punctuation" scalar → canonical ASCII replacement.
     /// See the type's doc comment for why each entry exists.
