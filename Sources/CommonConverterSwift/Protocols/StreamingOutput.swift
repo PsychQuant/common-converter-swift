@@ -61,15 +61,16 @@ public struct FileHandleOutput: StreamingOutput {
     /// durability guarantee.
     public func flush() throws {
         var status = stat()
-        guard fstat(fileHandle.fileDescriptor, &status) == 0 else {
-            // Can't determine the file type — be conservative and skip the
-            // sync rather than risk surfacing an unrelated fstat failure as
-            // a "couldn't save" error from a flush() call.
+        if fstat(fileHandle.fileDescriptor, &status) == 0, (status.st_mode & S_IFMT) != S_IFREG {
+            // Known non-regular file (pipe/tty/socket/FIFO): nothing to sync.
             return
         }
-        guard (status.st_mode & S_IFMT) == S_IFREG else {
-            return
-        }
+        // Either a regular file (the common case for `init(outputPath:)`),
+        // or `fstat` itself failed — fall through to the original,
+        // unconditional behavior rather than silently declaring success on
+        // a failure we couldn't fully diagnose. Any genuine problem (e.g. a
+        // closed/invalid fd) surfaces through whatever `synchronize()`
+        // itself throws, same as before this fix.
         try fileHandle.synchronize()
     }
 }
