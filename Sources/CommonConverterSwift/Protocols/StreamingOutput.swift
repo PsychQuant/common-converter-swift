@@ -49,7 +49,27 @@ public struct FileHandleOutput: StreamingOutput {
         try fileHandle.write(contentsOf: data)
     }
 
+    /// `fileHandle.synchronize()` (`fsync(2)`) only makes sense for a
+    /// regular on-disk file. macdoc#223: when stdout is a pipe (`macdoc
+    /// convert ... | cat`), `fsync` returns `EINVAL`, which Foundation
+    /// surfaces as a Cocoa "無法儲存檔案" error — even though `write(_:)`
+    /// above is already an unbuffered `write(2)`, so there is nothing
+    /// buffered to flush in the first place. The same is true for ttys,
+    /// sockets and FIFOs: none of them are `S_IFREG`, and none of them
+    /// support `fsync`. Skip the sync unless the underlying fd is a regular
+    /// file; regular-file writers (`init(outputPath:)`) keep their
+    /// durability guarantee.
     public func flush() throws {
+        var status = stat()
+        guard fstat(fileHandle.fileDescriptor, &status) == 0 else {
+            // Can't determine the file type — be conservative and skip the
+            // sync rather than risk surfacing an unrelated fstat failure as
+            // a "couldn't save" error from a flush() call.
+            return
+        }
+        guard (status.st_mode & S_IFMT) == S_IFREG else {
+            return
+        }
         try fileHandle.synchronize()
     }
 }
