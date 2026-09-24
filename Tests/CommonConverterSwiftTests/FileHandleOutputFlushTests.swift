@@ -19,11 +19,18 @@ final class FileHandleOutputFlushTests: XCTestCase {
 
         // Drain concurrently so `write(_:)` below can never block on a full
         // pipe buffer waiting for a reader that only starts after we're
-        // done writing.
+        // done writing. Codex round-1 finding #3: `box.data`'s write (on the
+        // reader thread) and its read (on the test thread, for the final
+        // assertion) must be properly synchronized — `@unchecked Sendable`
+        // and a sleep-based poll do not establish a happens-before edge,
+        // only `DispatchSemaphore.wait()` returning `.success` after the
+        // matching `signal()` does.
         final class Box: @unchecked Sendable { var data = Data() }
         let box = Box()
+        let readerFinished = DispatchSemaphore(value: 0)
         let reader = Thread {
             box.data = pipe.fileHandleForReading.readDataToEndOfFile()
+            readerFinished.signal()
         }
         reader.start()
 
@@ -35,18 +42,25 @@ final class FileHandleOutputFlushTests: XCTestCase {
 
         try pipe.fileHandleForWriting.close()
 
-        // Give the reader a bounded moment to finish, then check content
-        // made it through untouched — the fix must not skip writing.
-        let deadline = Date().addingTimeInterval(2)
-        while box.data.isEmpty && Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.01)
-        }
+        let finished = readerFinished.wait(timeout: .now() + 5) == .success
+        XCTAssertTrue(finished, "reader should finish reading once the write end is closed")
+        // Only read `box.data` after the semaphore wait above establishes a
+        // happens-before edge with the reader thread's write to it.
         XCTAssertEqual(String(data: box.data, encoding: .utf8), "hello pipe\n")
     }
 
     /// Writing to a regular file must keep the durability guarantee
     /// `flush()` originally existed for — the fix must not turn `flush()`
     /// into a no-op across the board, only skip fsync on non-regular files.
+    ///
+    /// Honest limitation (Codex round-1 finding #5): this only proves
+    /// `flush()` doesn't throw and the content round-trips through a normal
+    /// read — `write(contentsOf:)` already makes bytes visible to a
+    /// subsequent read via the page cache regardless of whether `fsync(2)`
+    /// actually ran, so this test would still pass even if the `S_IFREG`
+    /// branch below were accidentally turned into a no-op. Proving the
+    /// syscall itself fires would need syscall-level instrumentation
+    /// (dtrace or similar), which is out of scope for a portable unit test.
     func testFlushOnARegularFileStillSucceedsAndPersistsContent() throws {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("common-converter-swift-flush-tests-\(UUID().uuidString)", isDirectory: true)
