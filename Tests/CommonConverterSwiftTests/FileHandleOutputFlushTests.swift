@@ -44,8 +44,14 @@ final class FileHandleOutputFlushTests: XCTestCase {
 
         let finished = readerFinished.wait(timeout: .now() + 5) == .success
         XCTAssertTrue(finished, "reader should finish reading once the write end is closed")
-        // Only read `box.data` after the semaphore wait above establishes a
-        // happens-before edge with the reader thread's write to it.
+        // Codex round-2 finding: `XCTAssertTrue` above does not stop
+        // execution on failure — without this guard, a timed-out wait would
+        // still fall through to reading `box.data` while the reader thread
+        // might still be concurrently writing to it. Only read `box.data`
+        // after confirming the semaphore wait actually succeeded, which is
+        // what establishes the happens-before edge with the reader
+        // thread's write to it.
+        guard finished else { return }
         XCTAssertEqual(String(data: box.data, encoding: .utf8), "hello pipe\n")
     }
 
